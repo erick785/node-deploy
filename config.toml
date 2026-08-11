@@ -54,7 +54,7 @@ EnableQuickBlockFetching = true
 
 [Node.P2P]
 MaxPeers = 50
-NoDiscovery = false
+NoDiscovery = true
 StaticNodes = []
 TrustedNodes = []
 EnableMsgEvents = false

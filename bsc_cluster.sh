@@ -15,12 +15,45 @@ dbEngine="leveldb"
 gcmode="full"
 sleepBeforeStart=15
 sleepAfterStart=10
+pythonBin="${workspace}/genesis/.venv/bin/python"
+
+function sed_in_place() {
+    local expression=$1
+    local file=$2
+    if sed --version >/dev/null 2>&1; then
+        sed -i -e "${expression}" "${file}"
+    else
+        sed -i '' -e "${expression}" "${file}"
+    fi
+}
 
 # stop geth client
 function exit_previous() {
-    ValIdx=$1
-    ps -ef  | grep geth$ValIdx | grep config |awk '{print $2}' | xargs kill
-    sleep ${sleepBeforeStart}
+    local val_idx=${1:-}
+    local stopped=false
+    local pid_file
+
+    if [ -n "${val_idx}" ]; then
+        pid_files=("${workspace}/.local/node${val_idx}/pid")
+    else
+        pid_files=(
+            "${workspace}"/.local/node*/pid
+            "${workspace}"/.local/sentry*/pid
+            "${workspace}"/.local/fullnode*/pid
+        )
+    fi
+    for pid_file in "${pid_files[@]}"; do
+        [ -f "${pid_file}" ] || continue
+        pid=$(cat "${pid_file}")
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill "${pid}"
+            stopped=true
+        fi
+        rm -f "${pid_file}"
+    done
+    if [ "${stopped}" = true ]; then
+        sleep ${sleepBeforeStart}
+    fi
 }
 
 function create_validator() {
@@ -34,36 +67,37 @@ function create_validator() {
 }
 
 function prepare_bsc_client() {
-    if [ ${useLatestBscClient} = true ]; then
-        if [ ! -f "${workspace}/bsc/Makefile" ]; then
-            cd ${workspace}
-            git clone https://github.com/bnb-chain/bsc.git
+    local source_dir=${BSC_SOURCE_DIR:-"${workspace}/../bsc"}
+    if [ ${useLatestBscClient} = true ] || [ ! -x "${workspace}/bin/geth" ]; then
+        if [ ! -f "${source_dir}/Makefile" ]; then
+            echo "BSC source not found: ${source_dir}" >&2
+            exit 1
         fi
-        cd ${workspace}/bsc && git pull && make geth && mv -f ${workspace}/bsc/build/bin/geth ${workspace}/bin/
+        mkdir -p "${source_dir}/.cache/go-build" "${workspace}/bin"
+        cd "${source_dir}"
+        GOCACHE="${source_dir}/.cache/go-build" make geth
+        cp -f "${source_dir}/build/bin/geth" "${workspace}/bin/geth"
     fi
 }
 # reset genesis, but keep edited genesis-template.json
 function reset_genesis() {
     if [ ! -f "${workspace}/genesis/genesis-template.json" ]; then
-        cd ${workspace} && git submodule update --init --recursive genesis
-        cd ${workspace}/genesis && git reset --hard ${GENESIS_COMMIT}
+        echo "Genesis source is missing. Fetch bsc-genesis-contract at ${GENESIS_COMMIT} into ${workspace}/genesis." >&2
+        exit 1
     fi
     cd ${workspace}/genesis
-    cp genesis-template.json genesis-template.json.bk
-    cp scripts/init_holders.template scripts/init_holders.template.bk
-    git stash
-    cd ${workspace} && git submodule update --remote --recursive genesis && cd ${workspace}/genesis
-    git reset --hard ${GENESIS_COMMIT}
-    mv genesis-template.json.bk genesis-template.json
-    mv scripts/init_holders.template.bk scripts/init_holders.template
-
-    poetry install --no-root
-    npm install
-    rm -rf lib/forge-std
-    forge install --no-git foundry-rs/forge-std@v1.7.3
-    cd lib/forge-std/lib
-    rm -rf ds-test
-    git clone https://github.com/dapphub/ds-test
+    if [ -d .git ]; then
+        git reset --hard ${GENESIS_COMMIT}
+    fi
+    if [ "${SKIP_DEPENDENCY_INSTALL:-false}" != true ]; then
+        UV_CACHE_DIR="${workspace}/.cache/uv" uv pip install --python "${pythonBin}" \
+            web3==6.11.4 jinja2==3.1.4 typer==0.9.0 click==8.1.7 typing-extensions==4.8.0 \
+            'setuptools==70.3.0' 'pyunormalize>=16.0.0'
+        npm_config_cache="${workspace}/.cache/npm" npm ci --ignore-scripts
+    fi
+    [ -x "${pythonBin}" ] || { echo "Python environment missing: ${pythonBin}" >&2; exit 1; }
+    [ -d node_modules ] || { echo "npm dependencies missing under ${workspace}/genesis/node_modules" >&2; exit 1; }
+    [ -f lib/forge-std/src/Test.sol ] || { echo "forge-std dependency missing" >&2; exit 1; }
 }
 
 function prepare_config() {
@@ -99,12 +133,12 @@ function prepare_config() {
 
     cd ${workspace}/genesis/
     git checkout HEAD contracts
-    sed -i -e  's/alreadyInit = true;/turnLength = 16;alreadyInit = true;/' ${workspace}/genesis/contracts/BSCValidatorSet.sol
-    sed -i -e  's/public onlyCoinbase onlyZeroGasPrice {/public onlyCoinbase onlyZeroGasPrice {if (block.number < 2000) return;/' ${workspace}/genesis/contracts/BSCValidatorSet.sol
+    sed_in_place 's/alreadyInit = true;/turnLength = 16;alreadyInit = true;/' ${workspace}/genesis/contracts/BSCValidatorSet.sol
+    sed_in_place 's/public onlyCoinbase onlyZeroGasPrice {/public onlyCoinbase onlyZeroGasPrice {if (block.number < 2000) return;/' ${workspace}/genesis/contracts/BSCValidatorSet.sol
     
-    poetry run python -m scripts.generate generate-validators
-    poetry run python -m scripts.generate generate-init-holders "${initHolders}"
-    poetry run python -m scripts.generate dev \
+    "${pythonBin}" -m scripts.generate generate-validators
+    "${pythonBin}" -m scripts.generate generate-init-holders "${initHolders}"
+    "${pythonBin}" -m scripts.generate dev \
       --dev-chain-id "${CHAIN_ID}" \
       --init-burn-ratio "1000" \
       --init-felony-slash-scope "60" \
@@ -164,7 +198,7 @@ function initNetwork() {
     ${workspace}/bin/geth init-network --init.dir ${workspace}/.local --init.size=${size} --config ${workspace}/config.toml ${init_extra_args} ${workspace}/genesis/genesis.json
     rm -f ${workspace}/*bsc.log*
     for ((i = 0; i < size; i++)); do
-        sed -i -e '/"<nil>"/d' ${workspace}/.local/node${i}/config.toml
+        sed_in_place '/"<nil>"/d' ${workspace}/.local/node${i}/config.toml
         # init genesis
         initLog=${workspace}/.local/node${i}/init.log
         if  [ $i -eq 0 ] ; then
@@ -175,15 +209,15 @@ function initNetwork() {
         rm -f ${workspace}/.local/node${i}/*bsc.log*
 
         if [ ${EnableSentryNode} = true ]; then
-            sed -i -e '/"<nil>"/d' ${workspace}/.local/sentry${i}/config.toml
+            sed_in_place '/"<nil>"/d' ${workspace}/.local/sentry${i}/config.toml
             initLog=${workspace}/.local/sentry${i}/init.log
             ${workspace}/bin/geth --datadir ${workspace}/.local/sentry${i} init --state.scheme path --db.engine pebble ${workspace}/genesis/genesis.json  > "${initLog}" 2>&1
             rm -f ${workspace}/.local/sentry${i}/*bsc.log*
         fi
     done
     if [ ${EnableFullNode} = true ]; then
-        sed -i -e '/"<nil>"/d' ${workspace}/.local/fullnode0/config.toml
-        sed -i -e 's/EnableEVNFeatures = true/EnableEVNFeatures = false/g' ${workspace}/.local/fullnode0/config.toml
+        sed_in_place '/"<nil>"/d' ${workspace}/.local/fullnode0/config.toml
+        sed_in_place 's/EnableEVNFeatures = true/EnableEVNFeatures = false/g' ${workspace}/.local/fullnode0/config.toml
         initLog=${workspace}/.local/fullnode0/init.log
         ${workspace}/bin/geth --datadir ${workspace}/.local/fullnode0 init --state.scheme path --db.engine pebble ${workspace}/genesis/genesis.json  > "${initLog}" 2>&1
         rm -f ${workspace}/.local/fullnode0/*bsc.log*
@@ -207,8 +241,8 @@ function start_node() {
         --datadir ${datadir} \
         --nodekey ${datadir}/geth/nodekey \
         --rpc.allow-unprotected-txs --allow-insecure-unlock \
-        --ws --ws.addr 0.0.0.0 --ws.port ${ws_port} \
-        --http --http.addr 0.0.0.0 --http.port ${http_port} --http.corsdomain "*" \
+        --ws --ws.addr 127.0.0.1 --ws.port ${ws_port} \
+        --http --http.addr 127.0.0.1 --http.port ${http_port} --http.corsdomain "*" \
         --metrics --metrics.addr localhost --metrics.port ${metrics_port} \
         --pprof --pprof.addr localhost --pprof.port ${pprof_port} \
         --gcmode ${gcmode} --syncmode full --monitor.maliciousvote \
@@ -226,6 +260,7 @@ function start_node() {
         --override.defaultextrareserve ${DefaultExtraReserveForBlobRequests} \
         $( [ "${type}" = "node" ] && echo "--mine --vote --unlock ${cons_addr} --miner.etherbase ${cons_addr} --password ${datadir}/password.txt --blspassword ${datadir}/password.txt" ) \
         >> ${datadir}/bsc-node.log 2>&1 &
+    echo $! > "${datadir}/pid"
 }
 
 function native_start() {
@@ -276,7 +311,7 @@ function native_start() {
 
 function register_stakehub(){
     # wait feynman enable
-    sleep 45
+    sleep ${STAKEHUB_WAIT_SECONDS:-45}
     for ((i = 0; i < size; i++));do
         ${workspace}/create-validator/create-validator --consensus-key-dir ${workspace}/keys/validator${i} --vote-key-dir ${workspace}/keys/bls${i} \
             --password-path ${workspace}/keys/password.txt --amount 20001 --validator-desc Val${i} --rpc-url ${RPC_URL}

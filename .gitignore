@@ -9,3 +9,6 @@
 
 .idea/
 lib/
+/.cache
+/keys/malicious-nodekey
+/keys/victim-nodekey
