@@ -198,11 +198,14 @@ function _init_victim_dir() {
     done <<< "$honest_enodes"
     # trim trailing comma
     static_list="${static_list%,}"
+    if [ -n "${BOOT_ENODE:-}" ]; then
+        static_list=""
+    fi
 
     # Build config.toml with correct ports and P2P section
     python3 - "${basedir}/config.toml" "$VICTIM_DIR/config.toml" \
               "$VICTIM_P2P" "$VICTIM_HTTP" "$VICTIM_WS" "$static_list" <<'PYEOF'
-import sys, re
+import os, sys, re
 
 src, dst, p2p_port, http_port, ws_port, static_list = sys.argv[1:7]
 with open(src) as f:
@@ -217,15 +220,18 @@ content = re.sub(r'(WSHost\s*=\s*)"[^"]*"', r'\1"127.0.0.1"', content)
 # Replace [Node.P2P] section entirely
 content = re.sub(r'\[Node\.P2P\].*?(?=\n\[|\Z)', '', content, flags=re.DOTALL).rstrip() + '\n'
 
+bootnode = os.environ.get("BOOT_ENODE", "")
+discovery = "false" if bootnode else "true"
+bootstrap = f"[\"{bootnode}\"]" if bootnode else "[]"
 p2p_section = f"""
 # --- experiment overrides ---
 [Node.P2P]
-MaxPeers = 50
-NoDiscovery = true
+MaxPeers = 20
+NoDiscovery = {discovery}
 ListenAddr = ":{p2p_port}"
 StaticNodes = [{static_list}]
 TrustedNodes = []
-BootstrapNodes = []
+BootstrapNodes = {bootstrap}
 EnableMsgEvents = false
 PeerFilterPatterns = []
 """
@@ -309,6 +315,7 @@ function _start_victim() {
         --metrics --metrics.addr localhost --metrics.port "$VICTIM_METRICS" \
         --pprof --pprof.addr localhost --pprof.port "$VICTIM_PPROF" \
         --gcmode "$gcmode" --syncmode full \
+        $( [ -n "${BOOT_ENODE:-}" ] && echo "--bootnodes ${BOOT_ENODE} --discovery.v4" ) \
         --rialtohash "$rialtoHash" \
         --override.passedforktime "$PassedForkTime" \
         --override.lorentz "$PassedForkTime" \

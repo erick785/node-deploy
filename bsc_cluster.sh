@@ -2,6 +2,7 @@
 
 # Exit script on error
 set -e
+export PATH=/usr/local/go/bin:/home/ubuntu/.foundry/bin:$PATH
 
 basedir=$(
     cd $(dirname $0)
@@ -135,7 +136,7 @@ function prepare_config() {
     git checkout HEAD contracts
     sed_in_place 's/alreadyInit = true;/turnLength = 16;alreadyInit = true;/' ${workspace}/genesis/contracts/BSCValidatorSet.sol
     sed_in_place 's/public onlyCoinbase onlyZeroGasPrice {/public onlyCoinbase onlyZeroGasPrice {if (block.number < 2000) return;/' ${workspace}/genesis/contracts/BSCValidatorSet.sol
-    
+
     "${pythonBin}" -m scripts.generate generate-validators
     "${pythonBin}" -m scripts.generate generate-init-holders "${initHolders}"
     "${pythonBin}" -m scripts.generate dev \
@@ -173,7 +174,7 @@ function initNetwork() {
         mkdir ${workspace}/.local/fullnode0/geth
         cp ${workspace}/keys/fullnode-nodekey0 ${workspace}/.local/fullnode0/geth/nodekey
     fi
-    
+
     init_extra_args=""
     if [ ${EnableSentryNode} = true ]; then
         init_extra_args="--init.sentrynode-size ${size} --init.sentrynode-ports 30411"
@@ -234,6 +235,10 @@ function start_node() {
     local ws_port=$7
     local metrics_port=$8
     local pprof_port=$9
+    local state_scheme=path
+    if [ "${type}" = "node" ] && [ "${idx}" -eq 0 ]; then
+        state_scheme=hash
+    fi
 
     # update `config` in genesis.json
     # ${workspace}/.local/node${i}/geth${i} dumpgenesis --datadir ${workspace}/.local/node${i} | jq . > ${workspace}/.local/node${i}/genesis.json
@@ -245,7 +250,8 @@ function start_node() {
         --http --http.addr 127.0.0.1 --http.port ${http_port} --http.corsdomain "*" \
         --metrics --metrics.addr localhost --metrics.port ${metrics_port} \
         --pprof --pprof.addr localhost --pprof.port ${pprof_port} \
-        --gcmode ${gcmode} --syncmode full --monitor.maliciousvote \
+        --gcmode ${gcmode} --syncmode full --state.scheme ${state_scheme} --monitor.maliciousvote \
+        $( [ -n "${BOOT_ENODE:-}" ] && echo "--bootnodes ${BOOT_ENODE} --discovery.v4" ) \
         --rialtohash ${rialtoHash} \
         --override.passedforktime ${PassedForkTime} \
         --override.lorentz ${PassedForkTime} \
