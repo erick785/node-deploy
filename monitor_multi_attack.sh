@@ -96,7 +96,8 @@ cmd_status() {
     # 4. 最近的攻击事件
     echo -e "${GREEN}=== Recent Attack Events ===${NC}"
     echo "Victim log (last 5 sync events):"
-    grep "DL-ATTACK-EXP" .local/victim/bsc-node.log 2>/dev/null | grep -E "sync_candidate|sync_start|sync_end" | tail -5 || echo "No events yet"
+    grep -h "DL-ATTACK-EXP" .local/victim/bsc-node.log .local/victim/bsc.log* 2>/dev/null | \
+        grep -E "sync_candidate|sync_start|sync_end" | tail -5 || echo "No events yet"
     echo ""
 }
 
@@ -138,7 +139,7 @@ cmd_grep() {
     echo ""
 
     echo "=== Victim logs ==="
-    grep "$pattern" .local/victim/bsc-node.log 2>/dev/null | tail -20 || echo "No matches"
+    grep -h "$pattern" .local/victim/bsc-node.log .local/victim/bsc.log* 2>/dev/null | tail -20 || echo "No matches"
     echo ""
 
     echo "=== Attacker-0 logs ==="

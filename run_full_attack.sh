@@ -12,24 +12,8 @@ echo "多节点完全压制攻击实验 - 完整流程"
 echo "========================================="
 echo ""
 
-# 步骤1: 初始化诚实验证节点集群
-echo "[Step 1/7] Initializing honest validator cluster..."
-if [ ! -d ".local/node0" ]; then
-    echo "Running: ./bsc_cluster.sh reset"
-    ./bsc_cluster.sh reset
-    echo "✅ Honest cluster initialized"
-else
-    echo "✅ Honest cluster already exists, skipping..."
-fi
-echo ""
-
-# 等待诚实节点启动并出块
-echo "[Step 1.5/7] Waiting for honest nodes to produce blocks (30 seconds)..."
-sleep 30
-echo ""
-
-# 步骤2: 启动 bootnode
-echo "[Step 2/7] Starting bootnode..."
+# 步骤1: 启动 bootnode，后续所有节点都使用它进行发现
+echo "[Step 1/7] Starting bootnode..."
 if [ ! -d ".local/bootnode" ]; then
     ./start_bootnode.sh
     echo "✅ Bootnode started"
@@ -46,6 +30,22 @@ echo ""
 
 BOOT_ENODE=$(cat .local/bootnode/enode.txt)
 export BOOT_ENODE
+
+# 步骤2: 初始化或重启诚实验证节点集群
+echo "[Step 2/7] Starting honest validator cluster through bootnode..."
+if [ ! -d ".local/node0" ]; then
+    BOOT_ENODE="$BOOT_ENODE" ./bsc_cluster.sh reset
+    echo "✅ Honest cluster initialized"
+else
+    BOOT_ENODE="$BOOT_ENODE" ./bsc_cluster.sh restart
+    echo "✅ Honest cluster restarted with bootnode discovery"
+fi
+echo ""
+
+# 等待诚实节点启动并出块
+echo "[Step 2.5/7] Waiting for honest nodes to produce blocks (30 seconds)..."
+sleep 30
+echo ""
 
 # 步骤3: 初始化 victim 节点
 echo "[Step 3/7] Setting up victim node..."
