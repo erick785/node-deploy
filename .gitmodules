@@ -3,15 +3,3 @@
 	url = https://github.com/bnb-chain/bsc-genesis-contract.git
 	branch = master
 	ignore = dirty
-[submodule "go-energi"]
-	path = go-energi
-	url = https://github.com/erick785/go-energi.git
-	branch = sync-attack
-[submodule "vic-geth"]
-	path = vic-geth
-	url = https://github.com/erick785/vic-geth.git
-	branch = sync-attack
-[submodule "core-geth"]
-	path = core-geth
-	url = https://github.com/erick785/core-geth.git
-	branch = sync-attack
