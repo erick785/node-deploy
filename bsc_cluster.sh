@@ -60,6 +60,7 @@ function exit_previous() {
 function create_validator() {
     rm -rf ${workspace}/.local
     mkdir -p ${workspace}/.local
+    echo "${size}" > ${workspace}/.local/BSC_CLUSTER_SIZE
 
     for ((i = 0; i < size; i++)); do
         cp -r ${workspace}/keys/validator${i} ${workspace}/.local/
@@ -261,7 +262,6 @@ function start_node() {
         --override.mendel ${PassedForkTime} \
         --override.pasteur ${LastHardforkTime} \
         --override.immutabilitythreshold ${FullImmutabilityThreshold} \
-        --override.breatheblockinterval ${BreatheBlockInterval} \
         --override.minforblobrequest ${MinBlocksForBlobRequests} \
         --override.defaultextrareserve ${DefaultExtraReserveForBlobRequests} \
         $( [ "${type}" = "node" ] && echo "--mine --vote --unlock ${cons_addr} --miner.etherbase ${cons_addr} --password ${datadir}/password.txt --blspassword ${datadir}/password.txt" ) \

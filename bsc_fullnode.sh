@@ -55,7 +55,7 @@ function start() {
   --gcmode $gcmode --syncmode $syncmode --state.scheme ${stateScheme} $extraflags \
   --rialtohash ${rialtoHash} --override.passedforktime ${PassedForkTime} --override.lorentz ${PassedForkTime} --override.maxwell ${PassedForkTime} \
   --override.fermi ${PassedForkTime} --override.osaka ${PassedForkTime} --override.mendel ${PassedForkTime} --override.pasteur ${LastHardforkTime} \
-  --override.immutabilitythreshold ${FullImmutabilityThreshold} --override.breatheblockinterval ${BreatheBlockInterval} \
+  --override.immutabilitythreshold ${FullImmutabilityThreshold} \
   --override.minforblobrequest ${MinBlocksForBlobRequests} --override.defaultextrareserve ${DefaultExtraReserveForBlobRequests} \
   >> $dst/bsc-node.log 2>&1 &
   echo $! > $dst/pid

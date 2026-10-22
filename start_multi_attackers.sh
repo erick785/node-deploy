@@ -9,11 +9,15 @@ cd "$SCRIPT_DIR"
 source .env
 
 # 配置参数
-ATTACKER_COUNT=${1:-20}  # 默认 20 个攻击节点
+ATTACKER_COUNT=${1:-50}  # Experiment 1 default; maximum 100
+
+if ! [[ "$ATTACKER_COUNT" =~ ^[1-9][0-9]*$ ]] || [ "$ATTACKER_COUNT" -gt 100 ]; then
+    echo "[start-attackers] ERROR: attacker count must be between 1 and 100" >&2
+    exit 1
+fi
 
 # 攻击参数（可通过环境变量覆盖）
 TD_OFFSET=${DL_EXP_TD_OFFSET:-10000000}  # TD 偏移量（默认 1000万）
-ATTACK_MODE=${DL_EXP_MODE:-silent-header}  # 攻击模式
 VICTIM_NODE_ID_FILE=".local/victim/node-id.txt"
 ENODES_CACHE=".local/experiment-enodes.env"
 
@@ -40,7 +44,6 @@ BOOT_ENODE=$(cat .local/bootnode/enode.txt)
 echo "[start-attackers] Starting $ATTACKER_COUNT attacker nodes..."
 echo "[start-attackers] Target victim: $VICTIM_NODE_ID"
 echo "[start-attackers] TD offset: $TD_OFFSET"
-echo "[start-attackers] Attack mode: $ATTACK_MODE"
 echo "[start-attackers] Bootnode: $BOOT_ENODE"
 echo ""
 
@@ -65,18 +68,14 @@ for i in $(seq 0 $((ATTACKER_COUNT - 1))); do
 
     # 启动攻击节点
     BSC_DOWNLOADER_EXPERIMENT_ENABLED=1 \
-    BSC_DOWNLOADER_EXPERIMENT_LOCAL_ONLY_ACK=LOCAL_TEST_ONLY \
     BSC_DOWNLOADER_EXPERIMENT_NETWORK_ID="$CHAIN_ID" \
     BSC_DOWNLOADER_EXPERIMENT_VICTIM_IDS="$VICTIM_NODE_ID" \
     BSC_DOWNLOADER_EXPERIMENT_TD_OFFSET=$TD_OFFSET \
-    BSC_DOWNLOADER_EXPERIMENT_MODE=$ATTACK_MODE \
-    BSC_DOWNLOADER_EXPERIMENT_NODE_TIER="attacker" \
     nohup ./bin/geth \
         --datadir "$node_dir" \
         --config "$node_dir/config.toml" \
         --networkid $CHAIN_ID \
         --bootnodes "$BOOT_ENODE" \
-        --maxpeers 50 \
         --discovery.v4 \
         >> "$node_dir/attacker.log" 2>&1 &
 
@@ -99,7 +98,7 @@ echo "[start-attackers] ✅ Bootnode-only startup completed"
 echo "[start-attackers] No admin.addPeer calls were made; peers must be discovered through bootnode"
 echo ""
 echo "Monitor attack status with:"
-echo "  ./monitor_multi_attack.sh status"
+echo "  ./monitor_multi_attack.sh status $ATTACKER_COUNT"
 echo ""
 echo "View attacker logs:"
 echo "  tail -f .local/attackers/attacker-0/attacker.log"

@@ -76,6 +76,17 @@ You can see the logs in `.local/fullnode`.
 
 Generally, you need to wait for the validator to produce a certain amount of blocks before starting the full/snap syncing test, such as 1000 blocks.
 
+## Downloader Experiment 1
+
+Experiment 1 uses a one-validator chain, one normal-sync control node, one victim, a Bootnode, and 50 attackers by default. Initialize the chain once with `BSC_CLUSTER_SIZE=1`, then run:
+
+```bash
+./run_experiment_1.sh       # default: 50 attackers
+./run_experiment_1.sh 25    # choose 1-100 attackers
+```
+
+The runner does not reset the chain. It samples for 300 seconds and writes compact height, event-index, and 30-second summary CSVs under `../data/experiment_1/`, with full node logs alongside them. It refuses to overwrite an existing successful run; archive that directory before starting another run.
+
 ## Background transactions
 ```bash
 ## normal tx

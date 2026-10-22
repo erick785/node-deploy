@@ -6,6 +6,9 @@ cd "$SCRIPT_DIR"
 
 source .env
 
+ATTACKER_LIMIT=${2:-${ATTACKER_COUNT:-20}}
+HONEST_LIMIT=${BSC_CLUSTER_SIZE:-3}
+
 VICTIM_HTTP="http://127.0.0.1:8645"
 VICTIM_IPC=".local/victim/geth.ipc"
 
@@ -38,7 +41,7 @@ cmd_status() {
 
     echo "Attacker nodes: $attacker_count"
     echo "Honest nodes: $honest_count"
-    echo "Total peers: $total_peers / 20"
+    echo "Total peers: $total_peers / $((ATTACKER_LIMIT + HONEST_LIMIT + 5))"
     echo ""
 
     # 2. 检查 victim 同步状态

@@ -9,11 +9,37 @@ cd "$SCRIPT_DIR"
 source .env
 
 # 配置参数
-ATTACKER_COUNT=${1:-20}  # 默认 20 个攻击节点
+ATTACKER_COUNT=${1:-50}  # Experiment 1 default; maximum 100
 ATTACKER_BASE_PORT=30500
 ATTACKER_BASE_HTTP=8700
 
+if ! [[ "$ATTACKER_COUNT" =~ ^[1-9][0-9]*$ ]] || [ "$ATTACKER_COUNT" -gt 100 ]; then
+    echo "[setup-attackers] ERROR: attacker count must be between 1 and 100" >&2
+    exit 1
+fi
+
 echo "[setup-attackers] Setting up $ATTACKER_COUNT attacker nodes..."
+
+# Remove attacker directories outside the requested range so repeated runs
+# with a smaller count do not leave stale nodes in the experiment.
+for node_dir in .local/attackers/attacker-*; do
+    [ -d "$node_dir" ] || continue
+    node_index=${node_dir##*-}
+    if [ "$node_index" -ge "$ATTACKER_COUNT" ]; then
+        if [ -f "$node_dir/pid" ]; then
+            old_pid=$(cat "$node_dir/pid")
+            if kill -0 "$old_pid" 2>/dev/null; then
+                kill "$old_pid" 2>/dev/null || true
+                for _ in $(seq 1 10); do
+                    kill -0 "$old_pid" 2>/dev/null || break
+                    sleep 1
+                done
+                kill -9 "$old_pid" 2>/dev/null || true
+            fi
+        fi
+        rm -rf "$node_dir"
+    fi
+done
 
 # 检查 genesis.json
 if [ ! -f "genesis/genesis.json" ]; then
