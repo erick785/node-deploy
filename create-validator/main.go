@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -142,7 +144,45 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println("send createValidator. Tx hash:", signedTx.Hash().Hex())
+	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	receipt, err := bind.WaitMined(waitCtx, client, signedTx)
+	if err != nil {
+		panic(fmt.Errorf("wait for createValidator transaction %s: %w", signedTx.Hash(), err))
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		panic(fmt.Errorf("createValidator transaction %s failed in block %s", signedTx.Hash(), receipt.BlockNumber))
+	}
+
+	stakeHub, err := abi.NewStakeHubCaller(stakeHubAddr, client)
+	if err != nil {
+		panic(err)
+	}
+	callOpts := &bind.CallOpts{Context: waitCtx, BlockNumber: receipt.BlockNumber}
+	operatorAddr, err := stakeHub.ConsensusToOperator(callOpts, consensusAddr)
+	if err != nil {
+		panic(fmt.Errorf("verify StakeHub registration for %s: %w", consensusAddr, err))
+	}
+	if operatorAddr != consensusAddr {
+		panic(fmt.Errorf("StakeHub did not register consensus address %s (operator is %s)", consensusAddr, operatorAddr))
+	}
+	election, err := stakeHub.GetValidatorElectionInfo(callOpts, big.NewInt(0), big.NewInt(0))
+	if err != nil {
+		panic(fmt.Errorf("read StakeHub validator election info: %w", err))
+	}
+	foundWithPower := false
+	for i, address := range election.ConsensusAddrs {
+		if address == consensusAddr && i < len(election.VotingPowers) && election.VotingPowers[i] != nil && election.VotingPowers[i].Sign() > 0 {
+			foundWithPower = true
+			break
+		}
+	}
+	if !foundWithPower {
+		panic(fmt.Errorf("StakeHub registered %s but it is absent from election info or has no voting power (validators=%d)", consensusAddr, election.TotalLength))
+	}
+
+	fmt.Printf("createValidator confirmed: tx=%s block=%s consensus=%s operator=%s voting_power_verified=true\n",
+		signedTx.Hash().Hex(), receipt.BlockNumber, consensusAddr, operatorAddr)
 }
 
 func getBlsKeymanager(walletPath, password string) (keymanager.IKeymanager, error) {

@@ -23,13 +23,7 @@ git clone https://github.com/bnb-chain/node-deploy.git
 pip3 install -r requirements.txt
 ```
 
-3. build `create-validator`
-
-```bash
-# This tool is used to register the validators into StakeHub.
-cd create-validator
-go build
-```
+3. `bsc_cluster.sh reset` builds `create-validator`, then waits for each StakeHub registration transaction to be mined and verifies the validator has positive voting power before finishing reset.
 
 4. Configure the cluster
 ```
@@ -78,14 +72,14 @@ Generally, you need to wait for the validator to produce a certain amount of blo
 
 ## Downloader Experiment 1
 
-Experiment 1 uses a one-validator chain, one normal-sync control node, one victim, a Bootnode, and 50 attackers by default. Initialize the chain once with `BSC_CLUSTER_SIZE=1`, then run:
+Experiment 1 uses a one-validator chain, one normal-sync control node, one victim, a Bootnode, and a 50-peer topology. The victim's discovery database contains 6 malicious and 10 honest peers (including the validator); 33 malicious and 1 honest peer actively dial the victim. Initialize the chain once with `BSC_CLUSTER_SIZE=1`, then run:
 
 ```bash
-./run_experiment_1.sh       # default: 50 attackers
-./run_experiment_1.sh 25    # choose 1-100 attackers
+./run_experiment_1.sh
+./run_experiment_1.sh --duration 20  # short smoke run
 ```
 
-The runner does not reset the chain. It samples for 300 seconds and writes compact height, event-index, and 30-second summary CSVs under `../data/experiment_1/`, with full node logs alongside them. It refuses to overwrite an existing successful run; archive that directory before starting another run.
+The victim uses the default `MaxPeers=50` and `DialRatio=3`; connection direction is not constrained, and actual connections are recorded. The runner does not reset the chain. It samples for 300 seconds and writes chart CSVs and node output logs under `../data/experiment_1/`. Logs are grouped by node cohort under `logs/`, with validator and Bootnode logs alongside them; internal database files are not archived. It refuses to overwrite an existing successful run; archive that directory before starting another run. Failed runs are cleaned automatically.
 
 ## Background transactions
 ```bash

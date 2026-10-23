@@ -28,6 +28,10 @@ function sed_in_place() {
     fi
 }
 
+function build_create_validator() {
+    go -C "${workspace}/create-validator" build -o "${workspace}/create-validator/create-validator" .
+}
+
 # stop geth client
 function exit_previous() {
     local val_idx=${1:-}
@@ -328,6 +332,7 @@ CMD=$1
 ValidatorIdx=$2
 case ${CMD} in
 reset)
+    build_create_validator
     exit_previous
     create_validator
     prepare_bsc_client
