@@ -38,12 +38,8 @@ if ! [[ "$COLLECTION_SECONDS" =~ ^[1-9][0-9]*$ ]] || ((COLLECTION_SECONDS > 3600
     echo "duration must be an integer between 1 and 3600 seconds" >&2
     exit 2
 fi
-if [[ "${BSC_CLUSTER_SIZE:-}" != 1 || ! -f .local/BSC_CLUSTER_SIZE || $(<.local/BSC_CLUSTER_SIZE) != 1 ]]; then
-    echo "Experiment 1 requires an initialized BSC_CLUSTER_SIZE=1 chain" >&2
-    exit 2
-fi
-if [[ ! -f .local/node0/genesis.json || ! -f .local/node0/hardforkTime.txt ]]; then
-    echo "validator genesis is missing; initialize the one-validator chain first" >&2
+if [[ "${BSC_CLUSTER_SIZE:-}" != 1 ]]; then
+    echo "Experiment 1 requires BSC_CLUSTER_SIZE=1 in .env" >&2
     exit 2
 fi
 if [[ ! -x bin/geth || ! -x bin/bootnode || ! -x "$PYTHON" || ! -d "$BSC_DIR" ]]; then
@@ -55,7 +51,7 @@ mkdir -p "$OUT_DIR"
 if [[ -L "$OUT_DIR" ]]; then echo "refusing symlink output directory: $OUT_DIR" >&2; exit 2; fi
 existing=$(find "$OUT_DIR" -mindepth 1 ! -name .gitkeep -print -quit)
 if [[ -n "$existing" ]]; then
-    echo "chart CSV output already exists at $OUT_DIR; archive it before rerunning" >&2
+    echo "experiment output already exists at $OUT_DIR; archive it before rerunning" >&2
     exit 2
 fi
 mkdir -p "$OUT_DIR"
@@ -96,7 +92,7 @@ stop_runtime_nodes() {
 }
 
 archive_experiment_logs() {
-    local source relative destination
+    local source relative destination expected_nodes console_logs init_logs start_time_utc
     local archive_dir="$OUT_DIR/logs"
     mkdir -p "$archive_dir"
 
@@ -108,7 +104,7 @@ archive_experiment_logs() {
         mkdir -p "$archive_dir/validator"
         while IFS= read -r -d '' source; do
             cp -p "$source" "$archive_dir/validator/${source##*/}"
-        done < <(find .local/node0 -maxdepth 1 -type f -name 'bsc.log*' -print0)
+        done < <(find .local/node0 -maxdepth 1 -type f \( -name 'bsc.log*' -o -name 'bsc-node.log' -o -name 'init.log' \) -print0)
     fi
 
     if [[ -d "$STATE_DIR" ]]; then
@@ -118,6 +114,38 @@ archive_experiment_logs() {
             mkdir -p "$(dirname "$destination")"
             cp -p -- "$source" "$destination"
         done < <(find "$STATE_DIR" -type f \( -name 'console.log' -o -name 'init.log' -o -name 'bsc.log*' \) -print0)
+    fi
+
+    cp -p "$MANIFEST" "$archive_dir/peer_manifest.csv"
+    start_time_utc=$(date -u -d "@$T0_EPOCH" '+%Y-%m-%dT%H:%M:%S.%NZ')
+    {
+        printf 'start_epoch_unix=%s\n' "$T0_EPOCH"
+        printf 'start_time_utc=%s\n' "$start_time_utc"
+        printf 'chain_reset_command=./bsc_cluster.sh reset\n'
+        printf 'duration_seconds=%s\n' "$COLLECTION_SECONDS"
+        printf 'chain_id=%s\n' "$CHAIN_ID"
+        printf 'genesis_hash=%s\n' "$RIALTO_HASH"
+        printf 'victim_max_peers=%s\n' "$VICTIM_MAX_PEERS"
+        printf 'victim_dial_ratio=%s\n' "$VICTIM_DIAL_RATIO"
+        printf 'malicious_td_offset=%s\n' "$TD_OFFSET"
+        printf 'db_malicious=6\n'
+        printf 'db_honest_including_validator=10\n'
+        printf 'active_malicious=33\n'
+        printf 'active_honest=1\n'
+    } > "$archive_dir/run_metadata.txt"
+
+    expected_nodes=$(awk 'END { print NR - 1 }' "$MANIFEST")
+    console_logs=$(find "$archive_dir" -type f -name console.log | wc -l)
+    init_logs=$(find "$archive_dir" -type f -name init.log ! -path "$archive_dir/validator/init.log" | wc -l)
+    if (( console_logs != expected_nodes || init_logs != expected_nodes )); then
+        echo "incomplete node log archive: expected $expected_nodes console/init logs, got $console_logs/$init_logs" >&2
+        return 1
+    fi
+    if [[ ! -s "$archive_dir/chain_reset.log" || ! -s "$archive_dir/bootnode.log" || ! -s "$archive_dir/validator/bsc-node.log" || ! -s "$archive_dir/validator/init.log" ]] \
+        || [[ -z "$(find "$archive_dir/victim" -maxdepth 1 -type f -name 'bsc.log*' -print -quit)" ]] \
+        || [[ -z "$(find "$archive_dir/normal-sync" -maxdepth 1 -type f -name 'bsc.log*' -print -quit)" ]]; then
+        echo "required Bootnode, validator, victim, or normal-sync log is missing" >&2
+        return 1
     fi
 }
 
@@ -312,6 +340,16 @@ wait_for_normal_sync() {
 echo "[experiment-1] Topology: DB seeds 6 malicious + 10 honest; active dialers 33 malicious + 1 honest"
 echo "[experiment-1] Window: ${COLLECTION_SECONDS}s; DB candidates=16; active dialers=34; victim defaults MaxPeers=${VICTIM_MAX_PEERS}, DialRatio=${VICTIM_DIAL_RATIO}"
 
+echo "[experiment-1] Stopping any prior runtime and resetting the one-validator chain"
+stop_runtime_nodes
+if [[ -d "$STATE_DIR" ]]; then rm -rf -- "$STATE_DIR"; fi
+mkdir -p "$OUT_DIR/logs"
+./bsc_cluster.sh reset 2>&1 | tee "$OUT_DIR/logs/chain_reset.log"
+if [[ ! -f .local/BSC_CLUSTER_SIZE || $(<.local/BSC_CLUSTER_SIZE) != 1 || ! -f .local/node0/genesis.json || ! -f .local/node0/hardforkTime.txt ]]; then
+    echo "one-validator chain reset did not produce the required genesis state" >&2
+    exit 1
+fi
+
 if [[ -d "$STATE_DIR" ]]; then
     stop_runtime_nodes
     rm -rf -- "$STATE_DIR"
@@ -321,7 +359,6 @@ node0_config_backup="$STATE_DIR/node0-config.original"
 cp .local/node0/config.toml "$node0_config_backup"
 MANIFEST="$STATE_DIR/peer_manifest.csv"
 printf 'peer_id,label,cohort,role,enode,p2p_port,http_port\n' > "$MANIFEST"
-stop_runtime_nodes
 
 ./start_bootnode.sh
 BOOT_ENODE=$(<.local/bootnode/enode.txt)
@@ -453,4 +490,4 @@ EXPERIMENT_1_RUNTIME_DIR="$STATE_DIR" "$PYTHON" ./analyze_experiment_1.py finali
     --start-epoch "$T0_EPOCH" --duration "$COLLECTION_SECONDS" --out-dir "$OUT_DIR"
 archive_experiment_logs
 run_succeeded=true
-echo "[experiment-1] Complete. Chart CSVs: $OUT_DIR"
+echo "[experiment-1] Complete. CSVs and logs: $OUT_DIR"

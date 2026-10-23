@@ -72,14 +72,14 @@ Generally, you need to wait for the validator to produce a certain amount of blo
 
 ## Downloader Experiment 1
 
-Experiment 1 uses a one-validator chain, one normal-sync control node, one victim, a Bootnode, and a 50-peer topology. The victim's discovery database contains 6 malicious and 10 honest peers (including the validator); 33 malicious and 1 honest peer actively dial the victim. Initialize the chain once with `BSC_CLUSTER_SIZE=1`, then run:
+Experiment 1 uses a one-validator chain, one normal-sync control node, one victim, a Bootnode, and a 50-peer topology. The victim's discovery database contains 6 malicious and 10 honest peers (including the validator); 33 malicious and 1 honest peer actively dial the victim. Set `BSC_CLUSTER_SIZE=1` in `.env`, then run:
 
 ```bash
 ./run_experiment_1.sh
 ./run_experiment_1.sh --duration 20  # short smoke run
 ```
 
-The victim uses the default `MaxPeers=50` and `DialRatio=3`; connection direction is not constrained, and actual connections are recorded. The runner does not reset the chain. It samples for 300 seconds and writes chart CSVs and node output logs under `../data/experiment_1/`. Logs are grouped by node cohort under `logs/`, with validator and Bootnode logs alongside them; internal database files are not archived. It refuses to overwrite an existing successful run; archive that directory before starting another run. Failed runs are cleaned automatically.
+The victim uses the default `MaxPeers=50` and `DialRatio=3`; connection direction is not constrained, and actual connections are recorded. The runner resets and initializes the one-validator chain at the start of every run. It samples for 300 seconds and writes chart CSVs, the reset log, node output logs, a peer manifest, and run metadata under `../data/experiment_1/`. Logs are grouped by node cohort under `logs/`, with validator and Bootnode logs alongside them; internal database files are not archived. It refuses to overwrite an existing successful run; archive that directory before starting another run. Failed runs are cleaned automatically.
 
 ## Background transactions
 ```bash
