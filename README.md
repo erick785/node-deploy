@@ -81,6 +81,17 @@ Experiment 1 uses a one-validator chain, one normal-sync control node, one victi
 
 The victim uses the default `MaxPeers=50` and `DialRatio=3`; connection direction is not constrained, and actual connections are recorded. The runner resets and initializes the one-validator chain at the start of every run. It samples for 300 seconds and writes chart CSVs, the reset log, node output logs, a peer manifest, and run metadata under `../data/experiment_1/`. Logs are grouped by node cohort under `logs/`, with validator and Bootnode logs alongside them; internal database files are not archived. It refuses to overwrite an existing successful run; archive that directory before starting another run. Failed runs are cleaned automatically.
 
+## Downloader Experiment 2
+
+Experiment 2 runs five external malicious-to-honest peer compositions with 10 valid trials per group. Every trial resets the one-validator chain and rebuilds a fresh topology. The active dialers are `12/24`, `18/18`, `30/6`, `40/4`, and `33/1`; the victim's discovery database always has 6 malicious and 10 honest seeds. The default observation window is 300 seconds.
+
+```bash
+./run_experiment_2.sh
+./run_experiment_2.sh --group group_01 --trials 1 --duration 20  # short smoke run
+```
+
+The top-level output contains `success_rate.csv` and `final_peer_composition.csv`; per-trial samples, peer snapshots, manifests, metadata, and node logs are stored under `../data/experiment_2/runs/`. Any victim height increase from genesis makes that trial an attack failure. Invalid environments are deleted and retried; only valid trials count toward the 10-run denominator. A run can resume from already completed valid trials when the stored configuration matches.
+
 ## Background transactions
 ```bash
 ## normal tx
