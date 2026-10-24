@@ -194,7 +194,7 @@ def atomic_csv(path, fields, rows):
     path = Path(path)
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", newline="") as output:
-        writer = csv.DictWriter(output, fieldnames=fields)
+        writer = csv.DictWriter(output, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     temporary.replace(path)
@@ -223,23 +223,33 @@ def summarize(args):
                 results.append(result)
         if len(results) > planned:
             raise SystemExit(f"too many valid trials for {group['group_id']}: {len(results)} > {planned}")
-        successes = sum(bool(row["attack_success"]) for row in results)
-        valid = len(results)
-        success_rows.append({
-            "group_id": group["group_id"],
-            "malicious_to_honest_ratio": group["ratio"],
-            "active_malicious": group["active_malicious"],
-            "active_honest": group["active_honest"],
-            "active_total": group["active_malicious"] + group["active_honest"],
-            "planned_trials": planned,
-            "valid_trials": valid,
-            "attack_successes": successes,
-            "attack_failures": valid - successes,
-            "success_rate": f"{successes / planned:.6f}" if valid == planned else "",
-        })
+        results.sort(key=lambda row: int(row["trial"]))
+        trial_numbers = [int(row["trial"]) for row in results]
+        if len(trial_numbers) != len(set(trial_numbers)):
+            raise SystemExit(f"duplicate valid trial number for {group['group_id']}")
+        successes = 0
+        valid = 0
+        for row in results:
+            valid += 1
+            trial_success = bool(row["attack_success"])
+            successes += int(trial_success)
+            success_rows.append({
+                "group_id": group["group_id"],
+                "malicious_to_honest_ratio": group["ratio"],
+                "trial": row["trial"],
+                "active_malicious": group["active_malicious"],
+                "active_honest": group["active_honest"],
+                "active_total": group["active_malicious"] + group["active_honest"],
+                "planned_trials": planned,
+                "valid_trials": valid,
+                "trial_attack_success": str(trial_success).lower(),
+                "attack_successes": successes,
+                "attack_failures": valid - successes,
+                "success_rate": f"{successes / valid:.6f}",
+            })
         if valid < planned:
             incomplete.append(f"{group['group_id']}={valid}/{planned}")
-        for row in sorted(results, key=lambda item: int(item["trial"])):
+        for row in results:
             composition_rows.append({
                 "group_id": row["group_id"],
                 "malicious_to_honest_ratio": row["ratio"],
@@ -259,8 +269,9 @@ def summarize(args):
             })
 
     atomic_csv(root / "success_rate.csv", [
-        "group_id", "malicious_to_honest_ratio", "active_malicious", "active_honest", "active_total",
-        "planned_trials", "valid_trials", "attack_successes", "attack_failures", "success_rate",
+        "group_id", "malicious_to_honest_ratio", "trial", "active_malicious", "active_honest", "active_total",
+        "planned_trials", "valid_trials", "trial_attack_success", "attack_successes", "attack_failures",
+        "success_rate",
     ], success_rows)
     atomic_csv(root / "final_peer_composition.csv", [
         "group_id", "malicious_to_honest_ratio", "trial", "active_malicious", "active_honest",
