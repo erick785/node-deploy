@@ -92,6 +92,26 @@ Experiment 2 runs five external malicious-to-honest peer compositions with 10 va
 
 The top-level output contains `success_rate.csv` and `final_peer_composition.csv`; per-trial samples, peer snapshots, manifests, metadata, and node logs are stored under `../data/experiment_2/runs/`. Any victim height increase from genesis makes that trial an attack failure. Invalid environments are deleted and retried; only valid trials count toward the 10-run denominator. A run can resume from already completed valid trials when the stored configuration matches.
 
+## Downloader Experiment 3
+
+Experiment 3 compares candidate peer pools of 40, 50, 60, and 70, with 10 valid trials per group. Every trial resets the one-validator chain and rebuilds its nodes:
+
+| Candidate peers | Local malicious/honest seeds (validator included) | External malicious/honest dialers |
+| ---: | ---: | ---: |
+| 40 | 6 / 7 | 13 / 14 |
+| 50 | 6 / 10 | 17 / 17 |
+| 60 | 10 / 10 | 20 / 20 |
+| 70 | 10 / 13 | 23 / 24 |
+
+The victim keeps `MaxPeers=50` and `DialRatio=3`; 60 and 70 describe the candidate pool, not simultaneous established connections. The default observation is 300 seconds. A trial is an attack success only if the victim remains at genesis height for the entire window.
+
+```bash
+./run_experiment_3.sh
+./run_experiment_3.sh --group group_01 --trials 1 --duration 20  # short smoke run
+```
+
+`../data/experiment_3/success_rate.csv` stores one row per valid trial with the cumulative success rate. Per-trial samples and logs are under `../data/experiment_3/runs/`; the runner resumes completed trials when the stored configuration matches.
+
 ## Background transactions
 ```bash
 ## normal tx

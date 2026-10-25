@@ -13,6 +13,8 @@ unset BOOT_ENODE
 PYTHON="$SCRIPT_DIR/genesis/.venv/bin/python"
 OUT_DIR=${EXPERIMENT_2_OUTPUT_DIR:-"$ROOT_DIR/data/experiment_2"}
 STATE_DIR=${EXPERIMENT_2_STATE_DIR:-.local/experiment_2}
+EXPERIMENT_KIND=${EXPERIMENT_2_MODE:-2}
+EXPERIMENT_LABEL="experiment-${EXPERIMENT_2_MODE:-2}"
 DURATION=300
 TRIALS=10
 RETRY_LIMIT=3
@@ -20,13 +22,28 @@ GROUP_FILTER=
 MAX_PEERS=50
 DIAL_RATIO=3
 TD_OFFSET=${DL_EXP_TD_OFFSET:-10000000}
+if [[ "$EXPERIMENT_KIND" == 3 ]]; then
+    OUT_DIR=${EXPERIMENT_3_OUTPUT_DIR:-"$ROOT_DIR/data/experiment_3"}
+    STATE_DIR=${EXPERIMENT_3_STATE_DIR:-.local/experiment_3}
+    GROUP_IDS=(group_01 group_02 group_03 group_04)
+    GROUP_RATIOS=("total_40" "total_50" "total_60" "total_70")
+    GROUP_MALICIOUS=(13 17 20 23)
+    GROUP_HONEST=(14 17 20 24)
+    DB_MALICIOUS_BY_GROUP=(6 6 10 10)
+    DB_HONEST_BY_GROUP=(7 10 10 13)
+else
+    DB_MALICIOUS=${EXPERIMENT_2_DB_MALICIOUS:-6}
+    DB_HONEST_TOTAL=${EXPERIMENT_2_DB_HONEST_TOTAL:-10}
+fi
 CHILD_PID=
 CURRENT_ATTEMPT_DIR=
 
-GROUP_IDS=(group_01 group_02 group_03 group_04 group_05)
-GROUP_RATIOS=("0.5:1" "1:1" "5:1" "10:1" "33:1")
-GROUP_MALICIOUS=(12 18 30 40 33)
-GROUP_HONEST=(24 18 6 4 1)
+if [[ "$EXPERIMENT_KIND" != 3 ]]; then
+    GROUP_IDS=(group_01 group_02 group_03 group_04 group_05)
+    GROUP_RATIOS=("0.5:1" "1:1" "5:1" "10:1" "33:1")
+    GROUP_MALICIOUS=(12 18 30 40 33)
+    GROUP_HONEST=(24 18 6 4 1)
+fi
 
 usage() {
     cat <<'EOF'
@@ -59,6 +76,24 @@ else
             *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
         esac
     done
+fi
+
+if [[ "$EXPERIMENT_KIND" == 3 ]]; then
+    if [[ "$CHILD_MODE" != true ]]; then
+        echo "Experiment 3 must be launched through run_experiment_3.sh" >&2; exit 2
+    fi
+    group_index=-1
+    for index in "${!GROUP_IDS[@]}"; do
+        if [[ "$GROUP_ID" == "${GROUP_IDS[$index]}" ]]; then group_index=$index; break; fi
+    done
+    ((group_index >= 0)) || { echo "unknown Experiment 3 group: $GROUP_ID" >&2; exit 2; }
+    DB_MALICIOUS=${DB_MALICIOUS_BY_GROUP[$group_index]}
+    DB_HONEST_TOTAL=${DB_HONEST_BY_GROUP[$group_index]}
+    expected_candidates=$((DB_MALICIOUS + DB_HONEST_TOTAL + ACTIVE_MALICIOUS + ACTIVE_HONEST))
+    [[ "$RATIO" == "total_${expected_candidates}" ]] || {
+        echo "candidate topology does not match declared total: expected total_${expected_candidates}, got $RATIO" >&2
+        exit 2
+    }
 fi
 
 if ! [[ "$DURATION" =~ ^[1-9][0-9]*$ ]] || ((DURATION > 3600)); then
@@ -127,6 +162,17 @@ wait_rpc() {
         sleep 1
     done
     echo "RPC $method on port $port did not become ready" >&2
+    return 1
+}
+
+wait_for_victim_peers() {
+    local minimum=${1:-5} count
+    for _ in $(seq 1 90); do
+        count=$(rpc 8645 admin_peers 2>/dev/null | "$PYTHON" -c 'import json,sys; print(len(json.load(sys.stdin)["result"]))' 2>/dev/null || echo 0)
+        if ((count >= minimum)); then return 0; fi
+        sleep 1
+    done
+    echo "victim reached fewer than $minimum peers before sampling" >&2
     return 1
 }
 
@@ -272,12 +318,13 @@ archive_experiment_logs() {
         cp -p -- "$source" "$destination"
     done < <(find "$STATE_DIR" -type f \( -name 'console.log' -o -name 'init.log' -o -name 'bsc.log*' \) -print0)
     cp -p "$MANIFEST" "$archive_dir/peer_manifest.csv"
-    "$PYTHON" - "$archive_dir" "$GROUP_ID" "$RATIO" "$ACTIVE_MALICIOUS" "$ACTIVE_HONEST" "$TRIAL" "$DURATION" "$MAX_PEERS" "$DIAL_RATIO" "$TD_OFFSET" "$CHAIN_ID" "$RIALTO_HASH" "$T0_EPOCH" <<'PY'
-import json, sys
+    "$PYTHON" - "$archive_dir" "$GROUP_ID" "$RATIO" "$ACTIVE_MALICIOUS" "$ACTIVE_HONEST" "$TRIAL" "$DURATION" "$MAX_PEERS" "$DIAL_RATIO" "$TD_OFFSET" "$CHAIN_ID" "$RIALTO_HASH" "$T0_EPOCH" "$DB_MALICIOUS" "$DB_HONEST_TOTAL" <<'PY'
+import json, os, sys
 from datetime import datetime, timezone
 from pathlib import Path
 (directory, group, ratio, malicious, honest, trial, duration, max_peers,
- dial_ratio, td_offset, chain_id, genesis_hash, start_epoch) = sys.argv[1:]
+ dial_ratio, td_offset, chain_id, genesis_hash, start_epoch,
+ db_malicious, db_honest_total) = sys.argv[1:]
 metadata = {
     "group_id": group,
     "ratio": ratio,
@@ -291,10 +338,11 @@ metadata = {
     "victim_max_peers": int(max_peers),
     "victim_dial_ratio": int(dial_ratio),
     "malicious_td_offset": int(td_offset),
-    "db_malicious": 6,
-    "db_honest_including_validator": 10,
+    "db_malicious": int(db_malicious),
+    "db_honest_including_validator": int(db_honest_total),
     "active_malicious": int(malicious),
     "active_honest": int(honest),
+    "total_candidate_peers": int(db_malicious) + int(db_honest_total) + int(malicious) + int(honest),
 }
 Path(directory, "run_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 PY
@@ -325,7 +373,7 @@ run_trial() {
     mkdir -p "$OUT_ATTEMPT/logs"
     stop_runtime_nodes
     if [[ -e "$STATE_DIR" ]]; then rm -rf -- "$STATE_DIR"; fi
-    echo "[experiment-2][$GROUP_ID][$TRIAL] resetting validator chain"
+    echo "[$EXPERIMENT_LABEL][$GROUP_ID][$TRIAL] resetting validator chain"
     ./bsc_cluster.sh reset 2>&1 | tee "$OUT_ATTEMPT/logs/chain_reset.log"
     [[ -f .local/BSC_CLUSTER_SIZE && $(<.local/BSC_CLUSTER_SIZE) == 1 \
         && -f .local/node0/genesis.json && -f .local/node0/hardforkTime.txt ]]
@@ -364,20 +412,24 @@ PY
     victim_enode="enode://${victim_pubkey}@127.0.0.1:30401?discport=30401"
 
     db_seed_urls=("$validator_enode")
-    for index in $(seq 0 5); do
+    for index in $(seq 0 $((DB_MALICIOUS - 1))); do
         label=$(printf 'db-malicious-%02d' "$index")
         p2p=$((31000 + index)); http=$((8800 + index)); dir="$STATE_DIR/db-peers/$label"
         prepare_peer "$label" db malicious "$dir" "$p2p" "$http" false "$validator_enode"
         db_seed_urls+=("$PREPARED_ENODE"); db_peer_ports+=("$http")
         start_peer "$PREPARED_DIR" "$p2p" "$http" true bootnode
     done
-    for index in $(seq 1 9); do
-        label=$(printf 'db-honest-%02d' "$index")
-        p2p=$((31005 + index)); http=$((8805 + index)); dir="$STATE_DIR/db-peers/$label"
-        prepare_peer "$label" db honest "$dir" "$p2p" "$http" false "$validator_enode"
-        db_seed_urls+=("$PREPARED_ENODE"); db_peer_ports+=("$http"); honest_ports+=("$http")
-        start_peer "$PREPARED_DIR" "$p2p" "$http" false bootnode
-    done
+    if ((DB_HONEST_TOTAL > 1)); then
+        for index in $(seq 1 $((DB_HONEST_TOTAL - 1))); do
+            label=$(printf 'db-honest-%02d' "$index")
+            p2p=$((31000 + DB_MALICIOUS + index - 1))
+            http=$((8800 + DB_MALICIOUS + index - 1))
+            dir="$STATE_DIR/db-peers/$label"
+            prepare_peer "$label" db honest "$dir" "$p2p" "$http" false "$validator_enode"
+            db_seed_urls+=("$PREPARED_ENODE"); db_peer_ports+=("$http"); honest_ports+=("$http")
+            start_peer "$PREPARED_DIR" "$p2p" "$http" false bootnode
+        done
+    fi
 
     control_dir="$STATE_DIR/normal-sync"
     prepare_peer normal-sync-control control honest "$control_dir" 30601 8665 true "$validator_enode"
@@ -431,17 +483,32 @@ with open(sys.argv[1], newline="") as source:
     print(sum(1 for row in csv.DictReader(source) if row["cohort"] == "db"))
 PY
 )
-    [[ "$seeder_count" == 16 ]]
-    echo "[experiment-2][$GROUP_ID][$TRIAL] topology ready: active $ACTIVE_MALICIOUS malicious + $ACTIVE_HONEST honest"
+    expected_seed_count=$((DB_MALICIOUS + DB_HONEST_TOTAL))
+    [[ "$seeder_count" == "$expected_seed_count" ]]
+    echo "[$EXPERIMENT_LABEL][$GROUP_ID][$TRIAL] topology ready: active $ACTIVE_MALICIOUS malicious + $ACTIVE_HONEST honest; local seeds $DB_MALICIOUS malicious + $DB_HONEST_TOTAL honest"
 
-    T0_EPOCH=$(date +%s.%N)
-    EXPERIMENT_2_RUNTIME_DIR="$STATE_DIR" "$PYTHON" ./analyze_experiment_2.py collect \
-        --start-epoch "$T0_EPOCH" --duration "$DURATION" --max-peers "$MAX_PEERS" \
-        --active-malicious "$ACTIVE_MALICIOUS" --active-honest "$ACTIVE_HONEST" \
-        --group-id "$GROUP_ID" --ratio "$RATIO" --trial "$TRIAL" --trial-dir "$OUT_ATTEMPT" &
-    collector_pid=$!
-    start_peer "$victim_dir" 30401 8645 false discovery
-    wait_rpc 8645 eth_blockNumber
+    if [[ "$EXPERIMENT_KIND" == 3 && "$DURATION" -le 1 ]]; then
+        start_peer "$victim_dir" 30401 8645 false discovery
+        wait_rpc 8645 eth_blockNumber
+        wait_for_victim_peers 5
+        T0_EPOCH=$(date +%s.%N)
+        EXPERIMENT_2_RUNTIME_DIR="$STATE_DIR" "$PYTHON" ./analyze_experiment_2.py collect \
+            --start-epoch "$T0_EPOCH" --duration "$DURATION" --max-peers "$MAX_PEERS" \
+            --active-malicious "$ACTIVE_MALICIOUS" --active-honest "$ACTIVE_HONEST" \
+            --db-malicious "$DB_MALICIOUS" --db-honest-total "$DB_HONEST_TOTAL" \
+            --group-id "$GROUP_ID" --ratio "$RATIO" --trial "$TRIAL" --trial-dir "$OUT_ATTEMPT" &
+        collector_pid=$!
+    else
+        T0_EPOCH=$(date +%s.%N)
+        EXPERIMENT_2_RUNTIME_DIR="$STATE_DIR" "$PYTHON" ./analyze_experiment_2.py collect \
+            --start-epoch "$T0_EPOCH" --duration "$DURATION" --max-peers "$MAX_PEERS" \
+            --active-malicious "$ACTIVE_MALICIOUS" --active-honest "$ACTIVE_HONEST" \
+            --db-malicious "$DB_MALICIOUS" --db-honest-total "$DB_HONEST_TOTAL" \
+            --group-id "$GROUP_ID" --ratio "$RATIO" --trial "$TRIAL" --trial-dir "$OUT_ATTEMPT" &
+        collector_pid=$!
+        start_peer "$victim_dir" 30401 8645 false discovery
+        wait_rpc 8645 eth_blockNumber
+    fi
     wait "$collector_pid"
     collector_pid=
     stop_runtime_nodes
@@ -582,7 +649,10 @@ for group_index in "${selected_indices[@]}"; do
             if [[ -e "$CURRENT_ATTEMPT_DIR" ]]; then find "$CURRENT_ATTEMPT_DIR" -depth -delete; fi
             mkdir -p "$CURRENT_ATTEMPT_DIR"
             echo "[experiment-2][$group_id][$trial_name] environment attempt $attempt/$RETRY_LIMIT"
-            EXPERIMENT_2_STATE_DIR="$STATE_DIR" "$SCRIPT_DIR/run_experiment_2.sh" __trial \
+            EXPERIMENT_2_STATE_DIR="$STATE_DIR" \
+                EXPERIMENT_2_DB_MALICIOUS="$DB_MALICIOUS" \
+                EXPERIMENT_2_DB_HONEST_TOTAL="$DB_HONEST_TOTAL" \
+                "$SCRIPT_DIR/run_experiment_2.sh" __trial \
                 "$group_id" "$ratio" "$active_malicious" "$active_honest" "$trial" "$DURATION" "$CURRENT_ATTEMPT_DIR" &
             CHILD_PID=$!
             if wait "$CHILD_PID"; then

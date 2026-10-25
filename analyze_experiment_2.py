@@ -169,7 +169,10 @@ def sample(args):
         "duration_seconds": args.duration,
         "active_malicious": args.active_malicious,
         "active_honest": args.active_honest,
-        "victim_initial_height": 0,
+        "db_malicious": args.db_malicious,
+        "db_honest_including_validator": args.db_honest_total,
+        "total_candidate_peers": args.db_malicious + args.db_honest_total + args.active_malicious + args.active_honest,
+        "victim_initial_height": heights[0],
         "victim_max_height": max_victim_height,
         "victim_final_height": heights[-1],
         "attack_success": max_victim_height == 0,
@@ -293,6 +296,8 @@ def main():
     collect.add_argument("--max-peers", type=int, default=50)
     collect.add_argument("--active-malicious", required=True, type=int)
     collect.add_argument("--active-honest", required=True, type=int)
+    collect.add_argument("--db-malicious", type=int, default=6)
+    collect.add_argument("--db-honest-total", type=int, default=10)
     collect.add_argument("--group-id", required=True)
     collect.add_argument("--ratio", required=True)
     collect.add_argument("--trial", required=True, type=int)
